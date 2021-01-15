@@ -94,7 +94,7 @@ def convert_healthcheck_time(value: str) -> int:
         raise ValueError(f"Value {value} is not a healthcheck time string")
 
 
-async def initalize_app(app: str) -> None:
+async def initialize_app(app: str) -> None:
     # Clean up hanging containers and images, if any
     await asyncio.gather(
         _run_in_executor(DOCKER.containers.prune),
@@ -391,7 +391,7 @@ async def run() -> None:
     global TENANT
     TENANT = list(tenants.keys())[0]
 
-    initialize_app(environ["APP_NAME"])
+    await initialize_app(environ["APP_NAME"])
 
     async with Client(
         transport=AppSyncWebsocketsTransport(
