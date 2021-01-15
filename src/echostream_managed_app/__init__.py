@@ -17,7 +17,7 @@ import aiorun
 from boto3 import client
 from cognitoinator import TokenFetcher
 from docker import from_env
-from docker.types import LogConfig, Mount
+from docker.types import Healthcheck, LogConfig, Mount
 from docker_image.reference import Reference
 from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport
@@ -26,7 +26,6 @@ from watchtower import CloudWatchLogHandler
 
 from .appsync_websockets import AppSyncOIDCAuthorization, AppSyncWebsocketsTransport
 
-# TODO: comment in gql here to prevent log spam
 for name in [
     "boto",
     "urllib3",
@@ -34,8 +33,8 @@ for name in [
     "boto3",
     "botocore",
     "nose",
-    # "gql.transport.aiohttp",
-    # "gql.transport.websockets",
+    "gql.transport.aiohttp",
+    "gql.transport.websockets",
 ]:
     getLogger(name).setLevel(environ.get("LOG_LEVEL") or WARNING)
 
@@ -72,6 +71,13 @@ NODE_ENV_VARS = {
     "COGNITO_USERNAME": environ["COGNITO_USERNAME"],
     "CONTROL_REGION": environ["COGNITO_USERNAME"],
 }
+HEALTHCHECK_TIME_PATTERN = compile(r"^([0-9]+)(ms|s|m|h)$")
+HEALTHCHECK_TIME_MULTIPLIERS = {
+    "ms": 1000000,
+    "s": 1000000 * 1000,
+    "m": 1000000 * 1000 * 60,
+    "h": 1000000 * 1000 * 60 * 60,
+}
 
 
 async def _run_in_executor(func: Callable) -> Any:
@@ -79,6 +85,13 @@ async def _run_in_executor(func: Callable) -> Any:
         None,
         func,
     )
+
+
+def convert_healthcheck_time(value: str) -> int:
+    if match := HEALTHCHECK_TIME_PATTERN.match(value):
+        return int(match[1]) * HEALTHCHECK_TIME_MULTIPLIERS[match[2]]
+    else:
+        raise ValueError(f"Value {value} is not a healthcheck time string")
 
 
 async def initalize_app(app: str) -> None:
@@ -113,6 +126,13 @@ async def initalize_app(app: str) -> None:
                                         imageUrl
                                         password
                                         username
+                                    }
+                                    healthcheck {
+                                        test
+                                        interval
+                                        timeout
+                                        retries
+                                        start_period
                                     }
                                     volumes
                                 }
@@ -197,6 +217,13 @@ async def start_node(node: str, node_config: Optional[Dict[str, Any]] = None) ->
                                             password
                                             username
                                         }
+                                        healthcheck {
+                                            test
+                                            interval
+                                            timeout
+                                            retries
+                                            start_period
+                                        }
                                         volumes
                                     }
                                     portMappings {
@@ -267,6 +294,15 @@ async def start_node(node: str, node_config: Optional[Dict[str, Any]] = None) ->
                 mounts.append(
                     Mount(volumes[index], named_volumes[index].id, type="volume")
                 )
+        healthcheck = None
+        if node_healthcheck := node_config["managedNodeType"].get("healthcheck"):
+            healthcheck = Healthcheck(
+                test=node_healthcheck["test"],
+                interval=convert_healthcheck_time(node_healthcheck["interval"]),
+                timeout=convert_healthcheck_time(node_healthcheck["timeout"]),
+                retries=node_healthcheck["retries"],
+                start_period=convert_healthcheck_time(node_healthcheck["start_period"]),
+            )
         # Start the container
         utc_now = datetime.utcnow()
         NODES[node]["container"] = await _run_in_executor(
@@ -275,6 +311,7 @@ async def start_node(node: str, node_config: Optional[Dict[str, Any]] = None) ->
                 image.id,
                 detach=True,
                 environment={**NODE_ENV_VARS, **{"NODE_NAME": node}},
+                healthcheck=healthcheck,
                 log_config=LogConfig(
                     type="awslogs",
                     config={
