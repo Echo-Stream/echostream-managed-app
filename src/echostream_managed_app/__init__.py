@@ -318,6 +318,7 @@ async def start_node(node: str, node_config: Optional[Dict[str, Any]] = None) ->
                 DOCKER.containers.run,
                 image.id,
                 detach=True,
+                remove=True,
                 environment={**NODE_ENV_VARS, **{"NODE_NAME": node}},
                 healthcheck=healthcheck,
                 log_config=LogConfig(
