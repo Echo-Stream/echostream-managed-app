@@ -1,3 +1,4 @@
+#!/usr/bin/env python3.8
 import asyncio
 import functools
 import json
@@ -69,7 +70,8 @@ NODE_ENV_VARS = {
     "COGNITO_PASSWORD": environ["COGNITO_PASSWORD"],
     "COGNITO_USER_POOL_ID": environ["COGNITO_USER_POOL_ID"],
     "COGNITO_USERNAME": environ["COGNITO_USERNAME"],
-    "CONTROL_REGION": environ["COGNITO_USERNAME"],
+    "CONTROL_REGION": environ["CONTROL_REGION"],
+    "AWS_DEFAULT_REGION": environ["AWS_DEFAULT_REGION"]
 }
 HEALTHCHECK_TIME_PATTERN = compile(r"^([0-9]+)(ms|s|m|h)$")
 HEALTHCHECK_TIME_MULTIPLIERS = {
@@ -266,7 +268,7 @@ async def start_node(node: str, node_config: Optional[Dict[str, Any]] = None) ->
                 )
             )
             username, password = (
-                b64decode(authorization_data["authorizationToken"]).decode().split(":")
+                b64decode(authorization_data["authorizationData"][0]["authorizationToken"]).decode().split(":")
             )
 
         if (username, password) and None in (username, password):
@@ -342,7 +344,7 @@ async def start_node(node: str, node_config: Optional[Dict[str, Any]] = None) ->
         )
     except asyncio.CancelledError:
         raise
-    except Exception:
+    except Exception as e:
         getLogger().exception(f"Error occurred starting {node}")
 
 
