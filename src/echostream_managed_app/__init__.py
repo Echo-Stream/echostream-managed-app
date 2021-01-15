@@ -99,6 +99,13 @@ def convert_healthcheck_time(value: str) -> int:
 async def initialize_app(app: str) -> None:
     # Clean up hanging containers and images, if any
     await asyncio.gather(
+        *[
+            _run_in_executor(functools.partial(container.remove, force=True))
+            for container in DOCKER.containers.list()
+        ]
+    )
+    await _run_in_executor(functools.partial(print, "Done with the killing"))
+    await asyncio.gather(
         _run_in_executor(DOCKER.containers.prune),
         _run_in_executor(
             functools.partial(DOCKER.images.prune, filters={"dangling": True})
@@ -318,7 +325,6 @@ async def start_node(node: str, node_config: Optional[Dict[str, Any]] = None) ->
                 DOCKER.containers.run,
                 image.id,
                 detach=True,
-                remove=True,
                 environment={**NODE_ENV_VARS, **{"NODE_NAME": node}},
                 healthcheck=healthcheck,
                 log_config=LogConfig(
