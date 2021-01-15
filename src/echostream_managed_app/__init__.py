@@ -81,7 +81,7 @@ async def _run_in_executor(func: Callable) -> Any:
     )
 
 
-async def initalize_app(app: str) -> None:
+async def initialize_app(app: str) -> None:
     # Clean up hanging containers and images, if any
     await asyncio.gather(
         _run_in_executor(DOCKER.containers.prune),
@@ -126,7 +126,7 @@ async def initalize_app(app: str) -> None:
                     }
                     lastEvaluatedKey
                 }
-            }                
+            }
             """
         )
         app_result = await client.execute(
@@ -170,7 +170,7 @@ async def stop_node(node: str) -> None:
 
 async def start_node(node: str, node_config: Optional[Dict[str, Any]] = None) -> None:
     await stop_node(node)
-    getLogger().info("Starting node {node}")
+    getLogger().info(f"Starting node {node}")
     try:
         if not node_config:
             async with Client(
@@ -207,7 +207,7 @@ async def start_node(node: str, node_config: Optional[Dict[str, Any]] = None) ->
                             }
                             lastEvaluatedKey
                         }
-                    }                
+                    }
                     """
                 )
                 node_result = await client.execute(
@@ -223,13 +223,15 @@ async def start_node(node: str, node_config: Optional[Dict[str, Any]] = None) ->
         pull_args = {}
         docker_config = node_config["managedNodeType"]["dockerConfig"]
         username = docker_config.get("username")
-        password = docker_config.get("passowrd")
+        password = docker_config.get("password")
         image_url = docker_config["imageUrl"]
         image_ref = Reference.parse(image_url)
         # If this is an ECR repository, get the username/password from ECR
         if image_ref.repository["domain"] and ECR_PATTERN.match(
             image_ref.repository["domain"]
         ):
+            if username or password:
+                raise Exception("Username and password are mutually exclusive to using an ecr repo.")
             authorization_data = await _run_in_executor(
                 functools.partial(
                     ECR.get_authorization_token,
@@ -239,6 +241,10 @@ async def start_node(node: str, node_config: Optional[Dict[str, Any]] = None) ->
             username, password = (
                 b64decode(authorization_data["authorizationToken"]).decode().split(":")
             )
+
+        if (username, password) and None in (username, password):
+            raise Exception("You must provide both username AND password for private registries or neither for public registries")
+
         # Add the auth_config to the pull args if both username and password are present
         if username and password:
             pull_args["auth_config"] = {"username": username, "password": password}
@@ -348,7 +354,7 @@ async def run() -> None:
     global TENANT
     TENANT = list(tenants.keys())[0]
 
-    initalize_app(environ["APP_NAME"])
+    initialize_app(environ["APP_NAME"])
 
     async with Client(
         transport=AppSyncWebsocketsTransport(
