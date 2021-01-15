@@ -6,11 +6,11 @@ from datetime import datetime
 from hashlib import sha256
 from logging import INFO, WARNING, Formatter, getLogger
 from os import environ
+from re import compile
 from secrets import token_hex
 from ssl import _create_unverified_context
-from re import compile
 from time import gmtime
-from typing import Any, Dict
+from typing import Any, Callable, Dict, Optional
 from urllib.parse import urlparse
 
 import aiorun
@@ -62,25 +62,86 @@ ECR_PATTERN = compile(
     r"^[0-9]{12}.dkr.ecr.[a-z]{2}[-[a-z]{3,9}]{,2}-[1-3]{1}.amazonaws.com$"
 )
 ECR = client("ecr")
+NODE_ENV_VARS = {
+    "APPSYNC_ENDPOINT": environ["APPSYNC_ENDPOINT"],
+    "AUDIT_FIREHOSE": environ["AUDIT_FIREHOSE"],
+    "COGNITO_APP_ID": environ["COGNITO_APP_ID"],
+    "COGNITO_IDENTITY_POOL_ID": environ["COGNITO_IDENTITY_POOL_ID"],
+    "COGNITO_PASSWORD": environ["COGNITO_PASSWORD"],
+    "COGNITO_USER_POOL_ID": environ["COGNITO_USER_POOL_ID"],
+    "COGNITO_USERNAME": environ["COGNITO_USERNAME"],
+    "CONTROL_REGION": environ["COGNITO_USERNAME"],
+}
 
 
-async def run_in_executor(func):
+async def _run_in_executor(func: Callable) -> Any:
     return await asyncio.get_running_loop().run_in_executor(
         None,
         func,
     )
 
 
-async def initalize_app() -> None:
+async def initalize_app(app: str) -> None:
     # Clean up hanging containers and images, if any
     await asyncio.gather(
-        run_in_executor(DOCKER.containers.prune),
-        run_in_executor(
+        _run_in_executor(DOCKER.containers.prune),
+        _run_in_executor(
             functools.partial(DOCKER.images.prune, filters={"dangling": True})
         ),
     )
-    # TODO: search for app here, start nodes
-    pass
+    async with Client(
+        transport=AIOHTTPTransport(
+            url=environ["APPSYNC_ENDPOINT"],
+            headers={"Authorization": f"{TOKEN_FETCHER.id_token}"},
+        ),
+        fetch_schema_from_transport=True,
+    ) as client:
+        query = gql(
+            """
+            query getAppConfig($tenant: String!, $name: String!) {
+                SearchApps(tenant: $tenant, name: $name) {
+                    items {
+                        ... on ManagedApp {
+                            nodes {
+                                hostMounts {
+                                    containerPath
+                                    hostPath
+                                }
+                                logGroupName
+                                managedNodeType {
+                                    dockerConfig {
+                                        imageUrl
+                                        password
+                                        username
+                                    }
+                                    volumes
+                                }
+                                name
+                                portMappings {
+                                    containerPort
+                                    hostPort
+                                }
+                            }
+                        }
+                    }
+                    lastEvaluatedKey
+                }
+            }                
+            """
+        )
+        app_result = await client.execute(
+            query, variable_values={"tenant": TENANT, "name": app}
+        )
+    if app_result["SearchApps"]["lastEvaluatedKey"]:
+        raise Exception(f"More than one configuration found for {app}")
+    if not app_result["SearchApps"]["items"]:
+        raise Exception(f"No configuration found for {app}")
+    await asyncio.gather(
+        *[
+            start_node(node_config["name"], node_config)
+            for node_config in app_result["SearchApps"]["items"][0]["nodes"]
+        ]
+    )
 
 
 async def stop_node(node: str) -> None:
@@ -88,15 +149,15 @@ async def stop_node(node: str) -> None:
         getLogger().info("Stopping node {node}")
         try:
             # Stop the container
-            await run_in_executor(
+            await _run_in_executor(
                 functools.partial(container.stop, timeout=30),
             )
             # Wait for the container to actually stop
-            await run_in_executor(
+            await _run_in_executor(
                 functools.partial(container.wait, timeout=30),
             )
             # Remove the container, forcibly if necessary
-            await run_in_executor(
+            await _run_in_executor(
                 functools.partial(container.remove, force=True),
             )
             # Remove the tracked reference to the container
@@ -107,16 +168,60 @@ async def stop_node(node: str) -> None:
             getLogger().exception(f"Error occurred stopping {node}")
 
 
-async def start_node(node: str):
+async def start_node(node: str, node_config: Optional[Dict[str, Any]] = None) -> None:
     await stop_node(node)
     getLogger().info("Starting node {node}")
     try:
-        config = {}
-        # TODO: get config here
+        if not node_config:
+            async with Client(
+                transport=AIOHTTPTransport(
+                    url=environ["APPSYNC_ENDPOINT"],
+                    headers={"Authorization": f"{TOKEN_FETCHER.id_token}"},
+                ),
+                fetch_schema_from_transport=True,
+            ) as client:
+                query = gql(
+                    """
+                    query getNodeConfig($tenant: String!, $name: String!) {
+                        SearchNodes(tenant: $tenant, name: $name) {
+                            items {
+                                ... on ManagedNode {
+                                    hostMounts {
+                                        containerPath
+                                        hostPath
+                                    }
+                                    logGroupName
+                                    managedNodeType {
+                                        dockerConfig {
+                                            imageUrl
+                                            password
+                                            username
+                                        }
+                                        volumes
+                                    }
+                                    portMappings {
+                                        containerPort
+                                        hostPort
+                                    }
+                                }
+                            }
+                            lastEvaluatedKey
+                        }
+                    }                
+                    """
+                )
+                node_result = await client.execute(
+                    query, variable_values={"tenant": TENANT, "name": node}
+                )
+            if node_result["SearchNodes"]["lastEvaluatedKey"]:
+                raise Exception(f"More than one configuration found for {node}")
+            if not node_result["SearchNodes"]["items"]:
+                raise Exception(f"No configuration found for {node}")
+            node_config = node_result["SearchNodes"]["items"][0]
         # Create the node tracking
         NODES[node] = NODES.get(node, {})
         pull_args = {}
-        docker_config = config["managedNodeType"]["dockerConfig"]
+        docker_config = node_config["managedNodeType"]["dockerConfig"]
         username = docker_config.get("username")
         password = docker_config.get("passowrd")
         image_url = docker_config["imageUrl"]
@@ -125,7 +230,7 @@ async def start_node(node: str):
         if image_ref.repository["domain"] and ECR_PATTERN.match(
             image_ref.repository["domain"]
         ):
-            authorization_data = await run_in_executor(
+            authorization_data = await _run_in_executor(
                 functools.partial(
                     ECR.get_authorization_token,
                     registryIds=[image_ref.repository["domain"].split(".")[0]],
@@ -138,17 +243,17 @@ async def start_node(node: str):
         if username and password:
             pull_args["auth_config"] = {"username": username, "password": password}
         # Now let's pull the actual image
-        image = NODES[node]["image"] = await run_in_executor(
+        image = NODES[node]["image"] = await _run_in_executor(
             functools.partial(DOCKER.images.pull, image_url, **pull_args)
         )
         # Add volume tracking if doesn't exist
         NODES[node]["volumes"] = NODES[node].get("volumes", {})
         mounts = []
         # Create the volumes if we have host mounts
-        if volumes := config["managedNodeType"].get("volumes"):
+        if volumes := node_config["managedNodeType"].get("volumes"):
             named_volumes = await asyncio.gather(
                 *[
-                    run_in_executor(
+                    _run_in_executor(
                         functools.partial(
                             DOCKER.volumes.create,
                             name=sha256(f"{node}{volume}".encode()).hexdigest(),
@@ -164,23 +269,32 @@ async def start_node(node: str):
                 )
         # Start the container
         utc_now = datetime.utcnow()
-        NODES[node]["container"] = await run_in_executor(
+        NODES[node]["container"] = await _run_in_executor(
             functools.partial(
                 DOCKER.containers.run,
                 image.id,
+                detach=True,
+                environment={**NODE_ENV_VARS, **{"NODE_NAME": node}},
                 log_config=LogConfig(
                     type="awslogs",
                     config={
-                        "awslogs-region": environ["AWS_DEFAULT_REGION"],
-                        "awslogs-group": config["logGroupName"],
+                        "awslogs-group": node_config["logGroupName"],
                         "awslogs-multiline-pattern": "^\[(DEBUG|INFO|WARNING|ERROR|CRITICAL)\]",
                         "awslogs-stream": f"{utc_now.year}/{utc_now.month:02}/{utc_now.day:02}/{token_hex(16)}",
                     },
                 ),
-                mounts=mounts,
-                restart_policy={
-                    "Name": "always",
+                mounts=mounts
+                + [
+                    Mount(
+                        host_mount["containerPath"], host_mount["hostPath"], type="bind"
+                    )
+                    for host_mount in node_config.get("hostMounts", [])
+                ],
+                ports={
+                    int(port_mapping["containerPort"]): int(port_mapping["hostPort"])
+                    for port_mapping in node_config["portMappings"]
                 },
+                restart_policy={"Name": "unless-stopped"},
             ),
         )
     except asyncio.CancelledError:
@@ -191,15 +305,15 @@ async def start_node(node: str):
 
 async def remove_node(node: str) -> None:
     await stop_node(node)
-    try:
-        if node in NODES:
+    if node in NODES:
+        try:
             getLogger().info("Removing node {node}")
             remove_tasks = []
             if volumes := NODES[node]["volumes"].values():
                 for volume in volumes:
                     remove_tasks.append(
                         asyncio.create_task(
-                            run_in_executor(
+                            _run_in_executor(
                                 functools.partial(volume.remove, force=True),
                             )
                         )
@@ -207,7 +321,7 @@ async def remove_node(node: str) -> None:
             if image := NODES[node].get("image"):
                 remove_tasks.append(
                     asyncio.create_task(
-                        run_in_executor(
+                        _run_in_executor(
                             functools.partial(
                                 DOCKER.images.remove, image=image.id, force=True
                             ),
@@ -217,13 +331,13 @@ async def remove_node(node: str) -> None:
             if remove_tasks:
                 await asyncio.gather(*remove_tasks)
             del NODES[node]
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        getLogger().exception(f"Error occurred removing {node}")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            getLogger().exception(f"Error occurred removing {node}")
 
 
-async def run():
+async def run() -> None:
     getLogger().info(f'Starting app {environ["APP_NAME"]}')
     claims = jwt.get_unverified_claims(TOKEN_FETCHER.id_token)
     if "tenants" not in claims:
@@ -234,7 +348,7 @@ async def run():
     global TENANT
     TENANT = list(tenants.keys())[0]
 
-    # TODO: Initialize app here
+    initalize_app(environ["APP_NAME"])
 
     async with Client(
         transport=AppSyncWebsocketsTransport(
@@ -256,13 +370,28 @@ async def run():
             }
             """
         )
-        getLogger().info(f'Subscribing to notifications in {environ["APP_NAME"]}')
-        async for result in client.subscribe(
+        getLogger().info(
+            f'Subscribing to notifications for managed app {environ["APP_NAME"]}'
+        )
+        async for notification in client.subscribe(
             subscription,
             variable_values={"tenant": TENANT, "app": environ["APP_NAME"]},
         ):
-            # TODO: Process results here
-            getLogger().info(f"{result}")
+            if notification["itemType"] in ("app", "tenant"):
+                if notification["operation"] == "REMOVE":
+                    # app or tenant is being shutdown, let's exit
+                    break
+            elif notification["itemType"] == "node" and "node" in notification:
+                if notification["operation"] == "REMOVE":
+                    # node is being removed, remove it
+                    getLogger().info(f'Node {notification["node"]} has been removed')
+                    await remove_node(notification["node"])
+                else:
+                    # new node or node changed, let's start it up
+                    getLogger().info(
+                        f'Node {notification["node"]} has been {"changed" if notification["operation"] == "MODIFY" else "added"}'
+                    )
+                    await start_node(notification["node"])
     getLogger().info(f'Stopping app {environ["APP_NAME"]}')
     await asyncio.gather(*[stop_node(node) for node in NODES.keys()])
 
