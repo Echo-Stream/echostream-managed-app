@@ -141,7 +141,7 @@ async def initialize_app(app: str) -> None:
                                         interval
                                         timeout
                                         retries
-                                        start_period
+                                        startPeriod
                                     }
                                     volumes
                                 }
@@ -231,7 +231,7 @@ async def start_node(node: str, node_config: Optional[Dict[str, Any]] = None) ->
                                             interval
                                             timeout
                                             retries
-                                            start_period
+                                            startPeriod
                                         }
                                         volumes
                                     }
@@ -316,7 +316,7 @@ async def start_node(node: str, node_config: Optional[Dict[str, Any]] = None) ->
                 interval=convert_healthcheck_time(node_healthcheck["interval"]),
                 timeout=convert_healthcheck_time(node_healthcheck["timeout"]),
                 retries=node_healthcheck["retries"],
-                start_period=convert_healthcheck_time(node_healthcheck["start_period"]),
+                start_period=convert_healthcheck_time(node_healthcheck["startPeriod"]),
             )
         # Start the container
         utc_now = datetime.utcnow()
