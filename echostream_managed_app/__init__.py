@@ -431,7 +431,12 @@ class ManagedApp:
     async def _handle_change(self, change: Change) -> None:
         new = change.get("new")
         old = change.get("old")
-        if (new or old)["type"] == "ManagedApp" and (new or old)["name"] == self.name:
+        if new and old and new["type"] == "Tenant":
+            # The tenant has changed, restart all nodes
+            await asyncio.gather(
+                *[node.restart_async() for node in self.__nodes.values()]
+            )
+        elif (new or old)["type"] == "ManagedApp" and (new or old)["name"] == self.name:
             if new and not old:
                 # Got the creation, nothing to do
                 return
