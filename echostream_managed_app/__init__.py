@@ -8,21 +8,17 @@ from logging import INFO, WARNING, Formatter, getLogger
 from logging.handlers import WatchedFileHandler
 from os import environ, system
 from time import gmtime
-from typing import TYPE_CHECKING, Any, Callable, Coroutine, Literal, TypedDict, Union
+from typing import TYPE_CHECKING, Any, Callable, Coroutine, Literal, TypedDict
 from uuid import uuid4
 
 import boto3
-import docker
-from docker.models.resource import Model
 import simplejson as json
 from docker.client import DockerClient
-from docker.errors import NotFound
 from docker.models.containers import Container, ContainerCollection
-from docker.models.images import Image
 from docker.models.networks import Network
-from docker.types.containers import Healthcheck, LogConfig
-from docker.types.services import DriverConfig, Mount
-from echostream_node import Message, AuditRecord
+from docker.types.containers import LogConfig
+from docker.types.services import Mount
+from echostream_node import Message
 from echostream_node.asyncio import CognitoAIOHTTPTransport, Node
 from gql.client import Client as GqlClient
 from gql.gql import gql
@@ -114,7 +110,7 @@ class ManagedNodeContainer(Container):
     def receive_message_type(self) -> str:
         return self.labels.get("receive_message_type")
 
-    async def remove_asyc(self) -> None:
+    async def remove_async(self) -> None:
         await _run_in_executor(self.remove, force=True, v=True)
 
     async def restart_async(self) -> None:
@@ -214,16 +210,10 @@ class ManagedAppChangeReceiver(Node):
         self.__managed_app = managed_app
 
     async def handle_received_message(self, *, message: Message, source: str) -> None:
-        change: Change = json.loads(message.body)
-        self.put_audit_record(
-            AuditRecord(
-                attibutes=self.receive_message_auditor(message=change)
-                | dict(app=self.__managed_app.name),
-                message=message,
-                source=source,
-            )
+        self.audit_message(
+            message, extra_attributes=dict(app=self.__managed_app.name), source=source
         )
-        await self.__managed_app._handle_change(change)
+        await self.__managed_app._handle_change(json.loads(message.body))
 
 
 class ManagedAppDockerClient(DockerClient):
@@ -419,7 +409,7 @@ class ManagedApp:
     ) -> ManagedNodeContainer:
         if node:
             await node.stop_async()
-            await node.remove_asyc()
+            await node.remove_async()
         node: ManagedNodeContainer = await self.docker_client.containers.create_async(
             managed_node["managedNodeType"]["imageUri"],
             managed_app=self,
@@ -448,7 +438,7 @@ class ManagedApp:
                 await asyncio.gather(
                     *[node.restart_async() for node in self.__nodes.values()]
                 )
-        elif (new or old)["type"] == "ManagedNode"(new or old)["app"] == self.name:
+        elif (new or old)["type"] == "ManagedNode" and (new or old)["app"] == self.name:
             if new and not old:
                 # We have a new node to start
                 managed_node: ManagedNode = await self.__get_managed_node(new["name"])
@@ -457,7 +447,7 @@ class ManagedApp:
                 # Node was removed, stop it
                 if node := self.__nodes.pop((new or old)["name"], None):
                     await node.stop_async()
-                    await node.remove_asyc()
+                    await node.remove_async()
             else:
                 managed_node: ManagedNode = await self.__get_managed_node(new["name"])
                 # The node changed, restart it
@@ -595,7 +585,7 @@ class ManagedApp:
                     node, managed_nodes[node.name]
                 ):
                     # Container either is no longer needed or has an old image
-                    await node.remove_asyc()
+                    await node.remove_async()
                 else:
                     self.__nodes[node.name] = node
             for managed_node in [
