@@ -228,7 +228,7 @@ class ManagedAppDockerClient(DockerClient):
 class ManagedApp:
     __GET_APP_GQL = gql(
         """
-        query getManagedApp($name: String!, $tenant: $String!) {
+        query getManagedApp($name: String!, $tenant: String!) {
             GetApp(name: $name, tenant: $tenant) {
                 ... on ManagedApp {
                     nodes {
@@ -263,12 +263,13 @@ class ManagedApp:
                     }
                 }
             }
+        }
         """
     )
 
     __GET_NODE_GQL = gql(
         """
-        query getManagedNode($name: String!, $tenant: $String!) {
+        query getManagedNode($name: String!, $tenant: String!) {
             GetNode(name: $name, tenant: $tenant) {
                 __typename
                 ... on ManagedNode {
