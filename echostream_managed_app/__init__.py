@@ -559,10 +559,10 @@ class ManagedApp:
                 self.__docker_network = network[0]
             # Get the managed app from Echo
             async with self.gql_client as session:
-                managed_node_list: list[ManagedNode] = await session.execute(
+                managed_node_list: list[ManagedNode] = (await session.execute(
                     self.__GET_APP_GQL,
                     variable_values=dict(name=self.name, tenant=self.tenant),
-                )["GetApp"]["nodes"]
+                ))["GetApp"]["nodes"]
             managed_nodes: dict[str, ManagedNode] = {
                 managed_node["name"]: managed_node for managed_node in managed_node_list
             }
