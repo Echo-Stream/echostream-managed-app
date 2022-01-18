@@ -238,11 +238,7 @@ class ManagedApp:
                                 name
                             }
                             mounts {
-                                consistency
-                                labels
-                                noCopy
-                                options
-                                readOnly
+                                description
                                 source
                                 target
                             }
@@ -278,11 +274,7 @@ class ManagedApp:
                         name
                     }
                     mounts {
-                        consistency
-                        labels
-                        noCopy
-                        options
-                        readOnly
+                        description
                         source
                         target
                     }
