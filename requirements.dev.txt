@@ -1,0 +1,13 @@
+aiorun
+black
+boto3
+boto3-stubs[ecr,ecr-public]
+build
+docker>=4.4
+echostream-node
+gql[aiohttp]==3.0.0b0 
+pycognito
+sdnotify
+simplejson
+uvloop
+watchtower>=1.0.6
