@@ -313,7 +313,7 @@ class ManagedApp:
         self.__cognito = Cognito(
             client_id=environ["CLIENT_ID"],
             user_pool_id=environ["USER_POOL_ID"],
-            username=environ["USERNAME"],
+            username=environ["USER_NAME"],
         )
         self.__cognito.authenticate(password=environ["PASSWORD"])
         self.__gql_client = GqlClient(
@@ -530,7 +530,7 @@ class ManagedApp:
             PASSWORD=environ["PASSWORD"],
             TENANT=self.tenant,
             USER_POOL_ID=environ["USER_POOL_ID"],
-            USERNAME=environ["USERNAME"],
+            USERNAME=environ["USER_NAME"],
         )
 
     @property
@@ -549,7 +549,7 @@ class ManagedApp:
         try:
             # Get/create the network
             network: list[Network] = await _run_in_executor(
-                self.docker_client.networks.list(names=[self.name])
+                self.docker_client.networks.list, names=[self.name]
             )
             if not network:
                 self.__docker_network: Network = await _run_in_executor(
