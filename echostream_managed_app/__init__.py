@@ -556,10 +556,10 @@ class ManagedApp:
                     variable_values=dict(name=self.name, tenant=self.tenant),
                 ))["GetApp"]["nodes"]
             managed_nodes: dict[str, ManagedNode] = {
-                managed_node["name"]: managed_node for managed_node in managed_node_list
+                managed_node.get("name"): managed_node for managed_node in managed_node_list if managed_node
             }
             # Let's pull all images
-            image_uris = [node["managedNodeType"]["imageUri"] for node in managed_nodes]
+            image_uris = [managed_nodes[node]["managedNodeType"]["imageUri"] for node in managed_nodes]
             await self.__login(image_uris)
             await asyncio.gather(
                 *[
