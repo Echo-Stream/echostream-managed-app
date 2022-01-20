@@ -169,7 +169,7 @@ class ManagedAppContainerCollection(ContainerCollection):
             name=managed_node["name"],
             network=managed_app.docker_network.name,
             ports={
-                f'{port["containerPort"]/port["protocol"]}': (
+                f'{port["containerPort"]}/{port["protocol"]}': (
                     port.get("hostAddress", "0.0.0.0"),
                     port["hostPort"],
                 )
@@ -323,14 +323,14 @@ class ManagedApp:
         self.__sdnotify = SystemdNotifier()
 
     async def __login(self, image_uris: list[str]) -> None:
-        registries = set[str]
+        registries = set()
         for image_uri in image_uris:
             registry = image_uri.split("/")[0]
             if registry != "public.ecr.aws":
                 registries.add(registry)
         registries = list(registries)
         auth_tokens: list[str] = {
-            await _run_in_executor(self.ecr_public_client.get_authorization_token)[
+            (await _run_in_executor(self.ecr_public_client.get_authorization_token))[
                 "authorizationData"
             ]["authorizationToken"],
             *[
@@ -551,15 +551,22 @@ class ManagedApp:
                 self.__docker_network = network[0]
             # Get the managed app from Echo
             async with self.gql_client as session:
-                managed_node_list: list[ManagedNode] = (await session.execute(
-                    self.__GET_APP_GQL,
-                    variable_values=dict(name=self.name, tenant=self.tenant),
-                ))["GetApp"]["nodes"]
+                managed_node_list: list[ManagedNode] = (
+                    await session.execute(
+                        self.__GET_APP_GQL,
+                        variable_values=dict(name=self.name, tenant=self.tenant),
+                    )
+                )["GetApp"]["nodes"]
             managed_nodes: dict[str, ManagedNode] = {
-                managed_node.get("name"): managed_node for managed_node in managed_node_list if managed_node
+                managed_node.get("name"): managed_node
+                for managed_node in managed_node_list
+                if managed_node
             }
             # Let's pull all images
-            image_uris = [managed_nodes[node]["managedNodeType"]["imageUri"] for node in managed_nodes]
+            image_uris = [
+                managed_nodes[node]["managedNodeType"]["imageUri"]
+                for node in managed_nodes
+            ]
             await self.__login(image_uris)
             await asyncio.gather(
                 *[
