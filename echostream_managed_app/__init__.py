@@ -148,8 +148,12 @@ class ManagedAppContainerCollection(ContainerCollection):
             hostname=managed_node["name"],
             labels=dict(
                 managed_node_type=managed_node["managedNodeType"]["name"],
-                receive_message_type=managed_node["receiveMessageType"]["name"],
-                send_message_type=managed_node["sendMessageType"]["name"],
+                receiveMessageType=(managed_node.get("receiveMessageType") or {}).get(
+                    "name"
+                ),
+                send_message_type=(managed_node.get("send_message_type") or {}).get(
+                    "name"
+                ),
             ),
             log_config=LogConfig(
                 type="awslogs",
@@ -164,7 +168,7 @@ class ManagedAppContainerCollection(ContainerCollection):
                     source=mount.get("source", ""),
                     target=mount["target"],
                 )
-                for mount in managed_node.get("mounts", [])
+                for mount in managed_node.get("mounts") or []
             ],
             name=managed_node["name"],
             network=managed_app.docker_network.name,
@@ -177,7 +181,7 @@ class ManagedAppContainerCollection(ContainerCollection):
             },
             restart_policy=dict(Name="unless-stopped"),
         )
-        return _run_in_executor(self.create, image, command=command, **kwargs)
+        return await _run_in_executor(self.create, image, command=command, **kwargs)
 
     async def list_async(
         self,
@@ -346,7 +350,7 @@ class ManagedApp:
         for index, auth_token in enumerate(auth_tokens):
             username, password = b64decode(auth_token).decode().split(":")
             logins.append(
-                await self.docker_client.login_async(
+                self.docker_client.login_async(
                     username=username,
                     password=password,
                     registry=registries[index],
@@ -575,9 +579,9 @@ class ManagedApp:
                 ]
             )
             # Now list all existing containers, validate and prune
-            nodes_list: list[
-                ManagedNodeContainer
-            ] = await self.docker_client.containers.list_async(all=True)
+            nodes_list: list[ManagedNodeContainer] = self.docker_client.containers.list(
+                all=True
+            )
             self.__nodes: dict[str, ManagedNodeContainer] = dict()
             for node in nodes_list:
                 await node.stop_async()
