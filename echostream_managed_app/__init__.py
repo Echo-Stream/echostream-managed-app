@@ -333,18 +333,23 @@ class ManagedApp:
             if registry != "public.ecr.aws":
                 registries.add(registry)
         registries = list(registries)
-        auth_tokens: list[str] = {
-            (await _run_in_executor(self.ecr_public_client.get_authorization_token))[
-                "authorizationData"
-            ]["authorizationToken"],
-            *[
+        public_auth_token = (
+            await _run_in_executor(self.ecr_public_client.get_authorization_token)
+        )["authorizationData"]["authorizationToken"]
+        private_auth_tokens = (
+            [
                 auth_data["authorizationToken"]
-                for auth_data in await _run_in_executor(
-                    self.ecr_client.get_authorization_token,
-                    registryIds=[registry.split(".")[0] for registry in registries],
+                for auth_data in (
+                    await _run_in_executor(
+                        self.ecr_client.get_authorization_token,
+                        registryIds=[registry.split(".")[0] for registry in registries],
+                    )
                 )["authorizationData"]
-            ],
-        }
+            ]
+            if registries
+            else []
+        )
+        auth_tokens: list[str] = [public_auth_token, *private_auth_tokens]
         registries.insert(0, "public.ecr.aws")
         logins: list[Coroutine] = list()
         for index, auth_token in enumerate(auth_tokens):
@@ -396,9 +401,11 @@ class ManagedApp:
 
     async def __get_managed_node(self, name: str) -> ManagedNode:
         async with self.gql_client as session:
-            return await session.execute(
-                self.__GET_NODE_GQL,
-                variable_values=dict(name=name, tenant=self.tenant),
+            return (
+                await session.execute(
+                    self.__GET_NODE_GQL,
+                    variable_values=dict(name=name, tenant=self.tenant),
+                )
             )["GetNode"]
 
     async def __run_node(
@@ -618,8 +625,8 @@ class ManagedApp:
             # Notify systemd that we're going...
             self.__sdnotify.notify("READY=1")
             # Start up our change receiver
-            self.__managed_app_change_receiver_node = ManagedAppChangeReceiver(
-                managed_app=self
+            self.__managed_app_change_receiver_node = await _run_in_executor(
+                ManagedAppChangeReceiver, managed_app=self
             )
             await self.__managed_app_change_receiver_node.start()
             await self.__managed_app_change_receiver_node.join()
