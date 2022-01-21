@@ -205,7 +205,7 @@ class ManagedAppContainerCollection(ContainerCollection):
         )
 
     async def prune_async(self):
-        return _run_in_executor(self.prune)
+        return await _run_in_executor(self.prune)
 
 
 class ManagedAppChangeReceiver(Node):
@@ -526,7 +526,7 @@ class ManagedApp:
             PASSWORD=environ["PASSWORD"],
             TENANT=self.tenant,
             USER_POOL_ID=environ["USER_POOL_ID"],
-            USERNAME=environ["USER_NAME"],
+            USER_NAME=environ["USER_NAME"],
         )
 
     @property
@@ -612,7 +612,7 @@ class ManagedApp:
             # cleanup old images, volumes and containers
             await self.docker_client.containers.prune_async()
             await asyncio.gather(
-                _run_in_executor(self.docker_client.images.prune, dangling=False),
+                _run_in_executor(self.docker_client.images.prune),
                 _run_in_executor(self.docker_client.volumes.prune),
             )
             # Notify systemd that we're going...
