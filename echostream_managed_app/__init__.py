@@ -193,7 +193,7 @@ class ManagedAppContainerCollection(ContainerCollection):
         sparse=False,
         ignore_removed=False,
     ) -> list[ManagedNodeContainer]:
-        return _run_in_executor(
+        return await _run_in_executor(
             self.list,
             all=all,
             before=before,
@@ -486,7 +486,7 @@ class ManagedApp:
             and (new and old)
             and new["auditor"] != old["auditor"]
         ):
-            nodes: list[ManagedNodeContainer] = list
+            nodes: list[ManagedNodeContainer] = list()
             for node in self.__nodes.values():
                 if (
                     node.receive_message_type == new["name"]
@@ -586,7 +586,7 @@ class ManagedApp:
                 ]
             )
             # Now list all existing containers, validate and prune
-            nodes_list: list[ManagedNodeContainer] = self.docker_client.containers.list(
+            nodes_list: list[ManagedNodeContainer] = await self.docker_client.containers.list_async(
                 all=True
             )
             self.__nodes: dict[str, ManagedNodeContainer] = dict()
