@@ -11,6 +11,7 @@ from time import gmtime
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Literal, TypedDict
 from uuid import uuid4
 
+import aiorun
 import boto3
 import simplejson as json
 from docker.client import DockerClient
@@ -586,9 +587,9 @@ class ManagedApp:
                 ]
             )
             # Now list all existing containers, validate and prune
-            nodes_list: list[ManagedNodeContainer] = await self.docker_client.containers.list_async(
-                all=True
-            )
+            nodes_list: list[
+                ManagedNodeContainer
+            ] = await self.docker_client.containers.list_async(all=True)
             self.__nodes: dict[str, ManagedNodeContainer] = dict()
             for node in nodes_list:
                 await node.stop_async()
@@ -638,11 +639,15 @@ class ManagedApp:
         return self.__tenant
 
 
-async def main() -> None:
+async def main_async() -> None:
     try:
         app = ManagedApp()
         await app.start()
     except asyncio.CancelledError:
-        raise
+        pass
     except Exception:
         getLogger().exception("Error running app")
+
+
+def main() -> None:
+    aiorun.run(main_async(), stop_on_unhandled_errors=True, use_uvloop=True)
