@@ -377,7 +377,7 @@ class ManagedApp:
         for node_port in node_ports:
             if not (
                 container_port := container_ports.get(
-                    f'{node_port["containerPort"]}/{node_port["protocol"]}'
+                    f'{node_port["containerPort"]}/{node_port["protocol"]}[0]'
                 )
             ):
                 return False
@@ -447,7 +447,7 @@ class ManagedApp:
                 # We have a new node to start
                 managed_node: ManagedNode = await self.__get_managed_node(new["name"])
                 self.__nodes[new["name"]] = await self.__run_node(managed_node)
-            elif (new and new["removed"]) or (old and not new):
+            elif (new and new.get("removed")) or (old and not new):
                 # Node was removed, stop it
                 if node := self.__nodes.pop((new or old)["name"], None):
                     await node.stop_async()
