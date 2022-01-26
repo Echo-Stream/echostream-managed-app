@@ -148,8 +148,12 @@ class ManagedAppContainerCollection(ContainerCollection):
             hostname=managed_node["name"],
             labels=dict(
                 managed_node_type=managed_node["managedNodeType"]["name"],
-                receive_message_type=managed_node["receiveMessageType"]["name"],
-                send_message_type=managed_node["sendMessageType"]["name"],
+                receiveMessageType=(managed_node.get("receiveMessageType") or {}).get(
+                    "name"
+                ),
+                send_message_type=(managed_node.get("send_message_type") or {}).get(
+                    "name"
+                ),
             ),
             log_config=LogConfig(
                 type="awslogs",
@@ -164,12 +168,12 @@ class ManagedAppContainerCollection(ContainerCollection):
                     source=mount.get("source", ""),
                     target=mount["target"],
                 )
-                for mount in managed_node.get("mounts", [])
+                for mount in managed_node.get("mounts") or []
             ],
             name=managed_node["name"],
             network=managed_app.docker_network.name,
             ports={
-                f'{port["containerPort"]/port["protocol"]}': (
+                f'{port["containerPort"]}/{port["protocol"]}': (
                     port.get("hostAddress", "0.0.0.0"),
                     port["hostPort"],
                 )
@@ -177,7 +181,7 @@ class ManagedAppContainerCollection(ContainerCollection):
             },
             restart_policy=dict(Name="unless-stopped"),
         )
-        return _run_in_executor(self.create, image, command=command, **kwargs)
+        return await _run_in_executor(self.create, image, command=command, **kwargs)
 
     async def list_async(
         self,
@@ -201,7 +205,7 @@ class ManagedAppContainerCollection(ContainerCollection):
         )
 
     async def prune_async(self):
-        return _run_in_executor(self.prune)
+        return await _run_in_executor(self.prune)
 
 
 class ManagedAppChangeReceiver(Node):
@@ -238,11 +242,7 @@ class ManagedApp:
                                 name
                             }
                             mounts {
-                                consistency
-                                labels
-                                noCopy
-                                options
-                                readOnly
+                                description
                                 source
                                 target
                             }
@@ -278,11 +278,7 @@ class ManagedApp:
                         name
                     }
                     mounts {
-                        consistency
-                        labels
-                        noCopy
-                        options
-                        readOnly
+                        description
                         source
                         target
                     }
@@ -313,7 +309,7 @@ class ManagedApp:
         self.__cognito = Cognito(
             client_id=environ["CLIENT_ID"],
             user_pool_id=environ["USER_POOL_ID"],
-            username=environ["USERNAME"],
+            username=environ["USER_NAME"],
         )
         self.__cognito.authenticate(password=environ["PASSWORD"])
         self.__gql_client = GqlClient(
@@ -331,30 +327,35 @@ class ManagedApp:
         self.__sdnotify = SystemdNotifier()
 
     async def __login(self, image_uris: list[str]) -> None:
-        registries = set[str]
+        registries = set()
         for image_uri in image_uris:
             registry = image_uri.split("/")[0]
             if registry != "public.ecr.aws":
                 registries.add(registry)
         registries = list(registries)
-        auth_tokens: list[str] = {
-            await _run_in_executor(self.ecr_public_client.get_authorization_token)[
-                "authorizationData"
-            ]["authorizationToken"],
-            *[
+        public_auth_token = (
+            await _run_in_executor(self.ecr_public_client.get_authorization_token)
+        )["authorizationData"]["authorizationToken"]
+        private_auth_tokens = (
+            [
                 auth_data["authorizationToken"]
-                for auth_data in await _run_in_executor(
-                    self.ecr_client.get_authorization_token,
-                    registryIds=[registry.split(".")[0] for registry in registries],
+                for auth_data in (
+                    await _run_in_executor(
+                        self.ecr_client.get_authorization_token,
+                        registryIds=[registry.split(".")[0] for registry in registries],
+                    )
                 )["authorizationData"]
-            ],
-        }
+            ]
+            if registries
+            else []
+        )
+        auth_tokens: list[str] = [public_auth_token, *private_auth_tokens]
         registries.insert(0, "public.ecr.aws")
         logins: list[Coroutine] = list()
         for index, auth_token in enumerate(auth_tokens):
             username, password = b64decode(auth_token).decode().split(":")
             logins.append(
-                await self.docker_client.login_async(
+                self.docker_client.login_async(
                     username=username,
                     password=password,
                     registry=registries[index],
@@ -376,7 +377,7 @@ class ManagedApp:
         for node_port in node_ports:
             if not (
                 container_port := container_ports.get(
-                    f'{node_port["containerPort"]}/{node_port["protocol"]}'
+                    f'{node_port["containerPort"]}/{node_port["protocol"]}[0]'
                 )
             ):
                 return False
@@ -400,9 +401,11 @@ class ManagedApp:
 
     async def __get_managed_node(self, name: str) -> ManagedNode:
         async with self.gql_client as session:
-            return await session.execute(
-                self.__GET_NODE_GQL,
-                variable_values=dict(name=name, tenant=self.tenant),
+            return (
+                await session.execute(
+                    self.__GET_NODE_GQL,
+                    variable_values=dict(name=name, tenant=self.tenant),
+                )
             )["GetNode"]
 
     async def __run_node(
@@ -444,7 +447,7 @@ class ManagedApp:
                 # We have a new node to start
                 managed_node: ManagedNode = await self.__get_managed_node(new["name"])
                 self.__nodes[new["name"]] = await self.__run_node(managed_node)
-            elif (new and new["removed"]) or (old and not new):
+            elif (new and new.get("removed")) or (old and not new):
                 # Node was removed, stop it
                 if node := self.__nodes.pop((new or old)["name"], None):
                     await node.stop_async()
@@ -530,7 +533,7 @@ class ManagedApp:
             PASSWORD=environ["PASSWORD"],
             TENANT=self.tenant,
             USER_POOL_ID=environ["USER_POOL_ID"],
-            USERNAME=environ["USERNAME"],
+            USER_NAME=environ["USER_NAME"],
         )
 
     @property
@@ -549,7 +552,7 @@ class ManagedApp:
         try:
             # Get/create the network
             network: list[Network] = await _run_in_executor(
-                self.docker_client.networks.list(names=[self.name])
+                self.docker_client.networks.list, names=[self.name]
             )
             if not network:
                 self.__docker_network: Network = await _run_in_executor(
@@ -559,15 +562,22 @@ class ManagedApp:
                 self.__docker_network = network[0]
             # Get the managed app from Echo
             async with self.gql_client as session:
-                managed_node_list: list[ManagedNode] = await session.execute(
-                    self.__GET_APP_GQL,
-                    variable_values=dict(name=self.name, tenant=self.tenant),
+                managed_node_list: list[ManagedNode] = (
+                    await session.execute(
+                        self.__GET_APP_GQL,
+                        variable_values=dict(name=self.name, tenant=self.tenant),
+                    )
                 )["GetApp"]["nodes"]
             managed_nodes: dict[str, ManagedNode] = {
-                managed_node["name"]: managed_node for managed_node in managed_node_list
+                managed_node.get("name"): managed_node
+                for managed_node in managed_node_list
+                if managed_node
             }
             # Let's pull all images
-            image_uris = [node["managedNodeType"]["imageUri"] for node in managed_nodes]
+            image_uris = [
+                managed_nodes[node]["managedNodeType"]["imageUri"]
+                for node in managed_nodes
+            ]
             await self.__login(image_uris)
             await asyncio.gather(
                 *[
@@ -576,9 +586,9 @@ class ManagedApp:
                 ]
             )
             # Now list all existing containers, validate and prune
-            nodes_list: list[
-                ManagedNodeContainer
-            ] = await self.docker_client.containers.list_async(all=True)
+            nodes_list: list[ManagedNodeContainer] = self.docker_client.containers.list(
+                all=True
+            )
             self.__nodes: dict[str, ManagedNodeContainer] = dict()
             for node in nodes_list:
                 await node.stop_async()
@@ -609,14 +619,14 @@ class ManagedApp:
             # cleanup old images, volumes and containers
             await self.docker_client.containers.prune_async()
             await asyncio.gather(
-                _run_in_executor(self.docker_client.images.prune, dangling=False),
+                _run_in_executor(self.docker_client.images.prune),
                 _run_in_executor(self.docker_client.volumes.prune),
             )
             # Notify systemd that we're going...
             self.__sdnotify.notify("READY=1")
             # Start up our change receiver
-            self.__managed_app_change_receiver_node = ManagedAppChangeReceiver(
-                managed_app=self
+            self.__managed_app_change_receiver_node = await _run_in_executor(
+                ManagedAppChangeReceiver, managed_app=self
             )
             await self.__managed_app_change_receiver_node.start()
             await self.__managed_app_change_receiver_node.join()
