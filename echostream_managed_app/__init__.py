@@ -446,6 +446,14 @@ class ManagedApp:
             if new and not old:
                 # We have a new node to start
                 managed_node: ManagedNode = await self.__get_managed_node(new["name"])
+                # Login and pull image, necessary for a new managed app
+                await self.__login([managed_node["managedNodeType"]["imageUri"]])
+                await asyncio.gather(
+                    _run_in_executor(
+                        self.docker_client.images.pull,
+                        managed_node["managedNodeType"]["imageUri"],
+                    )
+                )
                 self.__nodes[new["name"]] = await self.__run_node(managed_node)
             elif (new and new.get("removed")) or (old and not new):
                 # Node was removed, stop it
@@ -586,9 +594,9 @@ class ManagedApp:
                 ]
             )
             # Now list all existing containers, validate and prune
-            nodes_list: list[ManagedNodeContainer] = await self.docker_client.containers.list_async(
-                all=True
-            )
+            nodes_list: list[
+                ManagedNodeContainer
+            ] = await self.docker_client.containers.list_async(all=True)
             self.__nodes: dict[str, ManagedNodeContainer] = dict()
             for node in nodes_list:
                 await node.stop_async()
