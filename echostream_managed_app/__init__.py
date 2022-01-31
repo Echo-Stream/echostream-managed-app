@@ -178,7 +178,7 @@ class ManagedAppContainerCollection(ContainerCollection):
                     port.get("hostAddress", "0.0.0.0"),
                     port["hostPort"],
                 )
-                for port in managed_node.get("ports", [])
+                for port in (managed_node.get("ports") or [])
             },
             restart_policy=dict(Name="unless-stopped"),
         )
