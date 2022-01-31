@@ -161,6 +161,7 @@ class ManagedAppContainerCollection(ContainerCollection):
                 config={
                     "awslogs-group": f'{managed_app.log_group_name}/node/{managed_node["name"]}',
                     "awslogs-multiline-pattern": "^\[(CRITICAL|DEBUG|ERROR|INFO|WARNING)\]",
+                    "awslogs-region": environ["AWS_DEFAULT_REGION"],
                     "awslogs-stream": f"{utc_now.year}/{utc_now.month:02}/{utc_now.day:02}/{uuid4().hex}",
                 },
             ),
