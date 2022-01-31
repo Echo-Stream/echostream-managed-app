@@ -178,7 +178,7 @@ class ManagedAppContainerCollection(ContainerCollection):
                     port.get("hostAddress", "0.0.0.0"),
                     port["hostPort"],
                 )
-                for port in managed_node.get("ports", [])
+                for port in (managed_node.get("ports") or [])
             },
             restart_policy=dict(Name="unless-stopped"),
         )
@@ -369,10 +369,11 @@ class ManagedApp:
     ) -> bool:
         if managed_node["managedNodeType"]["imageUri"] not in node.image.tags:
             return False
-        container_ports: dict[str, list[dict[str, str]]] = node.attrs["HostConfig"].get(
-            "PortBindings", {}
+        container_ports: dict[str, list[dict[str, str]]] = (
+            node.attrs["HostConfig"].get("PortBindings") or {}
         )
-        node_ports: list[Port] = managed_node.get("ports", [])
+
+        node_ports: list[Port] = managed_node.get("ports") or []
         if len(container_ports) != len(node_ports):
             return False
         for node_port in node_ports:
@@ -387,8 +388,8 @@ class ManagedApp:
                 and node_port["hostPort"] == container_port["HostPort"]
             ):
                 return False
-        container_mounts = node.attrs["HostConfig"].get("Mounts", [])
-        node_mounts = managed_node.get("mounts", [])
+        container_mounts = node.attrs["HostConfig"].get("Mounts") or []
+        node_mounts = managed_node.get("mounts") or []
         if len(container_mounts) != len(node_mounts):
             return False
         for node_mount in node_mounts:
@@ -447,6 +448,14 @@ class ManagedApp:
             if new and not old:
                 # We have a new node to start
                 managed_node: ManagedNode = await self.__get_managed_node(new["name"])
+                # Login and pull image, necessary for a new managed app
+                await self.__login([managed_node["managedNodeType"]["imageUri"]])
+                await asyncio.gather(
+                    _run_in_executor(
+                        self.docker_client.images.pull,
+                        managed_node["managedNodeType"]["imageUri"],
+                    )
+                )
                 self.__nodes[new["name"]] = await self.__run_node(managed_node)
             elif (new and new.get("removed")) or (old and not new):
                 # Node was removed, stop it
