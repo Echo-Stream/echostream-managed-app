@@ -369,9 +369,9 @@ class ManagedApp:
         if managed_node["managedNodeType"]["imageUri"] not in node.image.tags:
             return False
         container_ports: dict[str, list[dict[str, str]]] = node.attrs["HostConfig"].get(
-            "PortBindings", {}
-        )
-        node_ports: list[Port] = managed_node.get("ports", [])
+            "PortBindings") or {}
+        
+        node_ports: list[Port] = managed_node.get("ports") or []
         if len(container_ports) != len(node_ports):
             return False
         for node_port in node_ports:
@@ -386,8 +386,8 @@ class ManagedApp:
                 and node_port["hostPort"] == container_port["HostPort"]
             ):
                 return False
-        container_mounts = node.attrs["HostConfig"].get("Mounts", [])
-        node_mounts = managed_node.get("mounts", [])
+        container_mounts = node.attrs["HostConfig"].get("Mounts") or []
+        node_mounts = managed_node.get("mounts") or []
         if len(container_mounts) != len(node_mounts):
             return False
         for node_mount in node_mounts:
