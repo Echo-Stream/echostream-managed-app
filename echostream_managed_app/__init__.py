@@ -44,9 +44,7 @@ formatter.converter = gmtime
 watched_file_handler.setFormatter(formatter)
 getLogger().addHandler(watched_file_handler)
 getLogger("gql.transport.aiohttp").setLevel(environ.get("LOGGING_LEVEL") or WARNING)
-getLogger("gql.transport.awsappsyncwebsockets").setLevel(
-    environ.get("LOGGING_LEVEL") or WARNING
-)
+getLogger("gql.transport.requests").setLevel(environ.get("LOGGING_LEVEL") or WARNING)
 
 
 async def _run_in_executor(func: Callable, *args, **kwargs) -> Any:
@@ -161,22 +159,22 @@ class ManagedAppContainerCollection(ContainerCollection):
                 config={
                     "awslogs-group": f'{managed_app.log_group_name}/node/{managed_node["name"]}',
                     "awslogs-multiline-pattern": "^\[(CRITICAL|DEBUG|ERROR|INFO|WARNING)\]",
-                    "awslogs-region": environ["AWS_DEFAULT_REGION"],
+                    "awslogs-region": managed_app.region,
                     "awslogs-stream": f"{utc_now.year}/{utc_now.month:02}/{utc_now.day:02}/{uuid4().hex}",
                 },
             ),
             mounts=[
                 Mount(
-                    source=mount.get("source", ""),
+                    source=mount.get("source") or "",
                     target=mount["target"],
                 )
-                for mount in managed_node.get("mounts") or []
+                for mount in (managed_node.get("mounts") or [])
             ],
             name=managed_node["name"],
             network=managed_app.docker_network.name,
             ports={
                 f'{port["containerPort"]}/{port["protocol"]}': (
-                    port.get("hostAddress", "0.0.0.0"),
+                    port.get("hostAddress") or "0.0.0.0",
                     port["hostPort"],
                 )
                 for port in (managed_node.get("ports") or [])
@@ -264,6 +262,9 @@ class ManagedApp:
                         }
                     }
                 }
+                tenant {
+                    region
+                }
             }
         }
         """
@@ -307,13 +308,15 @@ class ManagedApp:
         self,
     ) -> None:
         super().__init__()
-        self.__docker_client = ManagedAppDockerClient.from_env()
         self.__cognito = Cognito(
             client_id=environ["CLIENT_ID"],
             user_pool_id=environ["USER_POOL_ID"],
             username=environ["USER_NAME"],
         )
         self.__cognito.authenticate(password=environ["PASSWORD"])
+        self.__docker_client = ManagedAppDockerClient.from_env()
+        self.__ecr_client: ECRClient = boto3.client("ecr")
+        self.__ecr_public_client: ECRPublicClient = boto3.client("ecr-public")
         self.__gql_client = GqlClient(
             fetch_schema_from_transport=True,
             transport=CognitoAIOHTTPTransport(
@@ -322,11 +325,10 @@ class ManagedApp:
             ),
         )
         self.__name: str = environ["APP"]
-        self.__tenant: str = environ["TENANT"]
-        self.__ecr_client: ECRClient = boto3.client("ecr")
-        self.__ecr_public_client: ECRPublicClient = boto3.client("ecr-public")
         self.__nodes: dict[str, ManagedNodeContainer] = dict()
+        self.__region: str = None
         self.__sdnotify = SystemdNotifier()
+        self.__tenant: str = environ["TENANT"]
 
     async def __login(self, image_uris: list[str]) -> None:
         registries = set()
@@ -573,14 +575,16 @@ class ManagedApp:
                 self.__docker_network = network[0]
             # Get the managed app from Echo
             async with self.gql_client as session:
-                managed_node_list: list[ManagedNode] = (
+                managed_app: dict[str, dict] = (
                     await session.execute(
                         self.__GET_APP_GQL,
                         variable_values=dict(name=self.name, tenant=self.tenant),
                     )
-                )["GetApp"]["nodes"]
+                )["GetApp"]
+            self.__region = managed_app["tenant"]["region"]
+            managed_node_list: list[ManagedNode] = managed_app["nodes"]
             managed_nodes: dict[str, ManagedNode] = {
-                managed_node.get("name"): managed_node
+                managed_node["name"]: managed_node
                 for managed_node in managed_node_list
                 if managed_node
             }
@@ -643,6 +647,10 @@ class ManagedApp:
             await self.__managed_app_change_receiver_node.join()
         finally:
             await asyncio.gather(*[node.stop_async() for node in self.__nodes.values()])
+
+    @property
+    def region(self) -> str:
+        return self.__region
 
     @property
     def tenant(self) -> str:
