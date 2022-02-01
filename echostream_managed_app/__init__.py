@@ -110,9 +110,11 @@ class ManagedNodeContainer(Container):
         return self.labels.get("receive_message_type")
 
     async def remove_async(self) -> None:
+        getLogger().info(f"Removing ManagedNode: {self.name}")
         await _run_in_executor(self.remove, force=True, v=True)
 
     async def restart_async(self) -> None:
+        getLogger().info(f"Restarting ManagedNode: {self.name}")
         await _run_in_executor(self.restart, timeout=30)
 
     @property
@@ -120,9 +122,11 @@ class ManagedNodeContainer(Container):
         return self.labels.get("send_message_type")
 
     async def start_async(self) -> None:
+        getLogger().info(f"Starting ManagedNode: {self.name}")
         await _run_in_executor(self.start)
 
     async def stop_async(self) -> None:
+        getLogger().info(f"Stopping ManagedNode: {self.name}")
         await _run_in_executor(self.stop, timeout=30)
 
 
@@ -181,6 +185,7 @@ class ManagedAppContainerCollection(ContainerCollection):
             },
             restart_policy=dict(Name="unless-stopped"),
         )
+        getLogger().info(f'Creating ManagedNode: {managed_node["name"]}')
         return await _run_in_executor(self.create, image, command=command, **kwargs)
 
     async def list_async(
@@ -217,7 +222,9 @@ class ManagedAppChangeReceiver(Node):
         self.audit_message(
             message, extra_attributes=dict(app=self.__managed_app.name), source=source
         )
-        await self.__managed_app._handle_change(json.loads(message.body))
+        change: Change = json.loads(message.body)
+        getLogger().debug(f"CHANGE:\n{json.dumps(change, indent=4)}")
+        await self.__managed_app._handle_change(change)
 
 
 class ManagedAppDockerClient(DockerClient):
@@ -432,6 +439,7 @@ class ManagedApp:
         old = change.get("old")
         if new and old and new["type"] == "Tenant":
             # The tenant has changed, restart all nodes
+            getLogger().info("Received a change to the Tenant")
             await asyncio.gather(
                 *[node.restart_async() for node in self.__nodes.values()]
             )
@@ -441,15 +449,18 @@ class ManagedApp:
                 return
             if new and new.get("removed"):
                 # Our app has been removed, shutdown the host VM
+                getLogger().critical("ManagedApp removed, shutting down now!")
                 system("shutdown now")
             if new and old:
                 # the app has changed, restart all nodes
+                getLogger().info("Received a change to the ManagedApp")
                 await asyncio.gather(
                     *[node.restart_async() for node in self.__nodes.values()]
                 )
         elif (new or old)["type"] == "ManagedNode" and (new or old)["app"] == self.name:
             if new and not old:
                 # We have a new node to start
+                getLogger().info(f'Received a new ManagedNode: {new["name"]}')
                 managed_node: ManagedNode = await self.__get_managed_node(new["name"])
                 # Login and pull image, necessary for a new managed app
                 await self.__login([managed_node["managedNodeType"]["imageUri"]])
@@ -459,13 +470,16 @@ class ManagedApp:
                         managed_node["managedNodeType"]["imageUri"],
                     )
                 )
+                getLogger().info(f'Starting: {managed_node["name"]}')
                 self.__nodes[new["name"]] = await self.__run_node(managed_node)
             elif (new and new.get("removed")) or (old and not new):
                 # Node was removed, stop it
+                getLogger().info(f'Received a ManagedNode removal: {(new or old)["name"]}')
                 if node := self.__nodes.pop((new or old)["name"], None):
                     await node.stop_async()
                     await node.remove_async()
             else:
+                getLogger().info(f'Received a change to ManagedNode: {new["name"]}')
                 managed_node: ManagedNode = await self.__get_managed_node(new["name"])
                 # The node changed, restart it
                 if (node := self.__nodes.get(new["name"])) and not self.__validate_node(
@@ -483,6 +497,7 @@ class ManagedApp:
             and (new and old)
             and new["imageUri"] != old["imageUri"]
         ):
+            getLogger().info(f'Received a change to ManagedNodeType: {new["name"]}')
             for node in list(self.__nodes.values()):
                 if node.managed_node_type == new["name"]:
                     managed_node: ManagedNode = await self.__get_managed_node(node.name)
@@ -499,6 +514,7 @@ class ManagedApp:
             and (new and old)
             and new["auditor"] != old["auditor"]
         ):
+            getLogger().info(f'Received a change to MessageType: {new["name"]}')
             nodes: list[ManagedNodeContainer] = list()
             for node in self.__nodes.values():
                 if (
@@ -511,6 +527,7 @@ class ManagedApp:
         elif (new or old)["type"] == "Edge" and (new is not None) ^ (old is not None):
             # find nodes that use edge and restart them
             edge = new or old
+            getLogger().info(f'Received a change to an Edge: {edge["source"]} -> {edge["target"]}')
             nodes: list[ManagedNodeContainer] = list()
             for node in self.__nodes.values():
                 if edge["source"] == node.name or edge["target"] == node.name:
@@ -568,6 +585,7 @@ class ManagedApp:
                 self.docker_client.networks.list, names=[self.name]
             )
             if not network:
+                getLogger().info(f"Creating Docker bridge network: {self.name}")
                 self.__docker_network: Network = await _run_in_executor(
                     self.docker_client.networks.create, name=self.name, driver="bridge"
                 )
@@ -640,12 +658,13 @@ class ManagedApp:
             # Notify systemd that we're going...
             self.__sdnotify.notify("READY=1")
             # Start up our change receiver
-            self.__managed_app_change_receiver_node = await _run_in_executor(
+            self.__managed_app_change_receiver_node: ManagedAppChangeReceiver = await _run_in_executor(
                 ManagedAppChangeReceiver, managed_app=self
             )
             await self.__managed_app_change_receiver_node.start()
             await self.__managed_app_change_receiver_node.join()
         finally:
+            getLogger().info("Shutting down ManagedApp")
             await asyncio.gather(*[node.stop_async() for node in self.__nodes.values()])
 
     @property
