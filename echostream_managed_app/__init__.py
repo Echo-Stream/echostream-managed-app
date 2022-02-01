@@ -228,7 +228,10 @@ class ManagedAppChangeReceiver(Node):
         )
         change: Change = json.loads(message.body)
         getLogger().debug(f"CHANGE:\n{json.dumps(change, indent=4)}")
-        await self.__managed_app._handle_change(change)
+        try:
+            await self.__managed_app._handle_change(change)
+        except Exception:
+            getLogger().exception(f"Error handling change:\n{json.dumps(change, indent=4)}")
 
 
 class ManagedAppDockerClient(DockerClient):
