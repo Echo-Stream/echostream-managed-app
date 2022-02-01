@@ -112,10 +112,12 @@ class ManagedNodeContainer(Container):
     async def remove_async(self) -> None:
         getLogger().info(f"Removing ManagedNode: {self.name}")
         await _run_in_executor(self.remove, force=True, v=True)
+        getLogger().info(f"Removed ManagedNode: {self.name}")
 
     async def restart_async(self) -> None:
         getLogger().info(f"Restarting ManagedNode: {self.name}")
         await _run_in_executor(self.restart, timeout=30)
+        getLogger().info(f"Restarted ManagedNode: {self.name}")
 
     @property
     def send_message_type(self) -> str:
@@ -124,10 +126,12 @@ class ManagedNodeContainer(Container):
     async def start_async(self) -> None:
         getLogger().info(f"Starting ManagedNode: {self.name}")
         await _run_in_executor(self.start)
+        getLogger().info(f"Started ManagedNode: {self.name}")
 
     async def stop_async(self) -> None:
         getLogger().info(f"Stopping ManagedNode: {self.name}")
         await _run_in_executor(self.stop, timeout=30)
+        getLogger().info(f"Stopped ManagedNode: {self.name}")
 
 
 class ManagedAppContainerCollection(ContainerCollection):
@@ -470,7 +474,6 @@ class ManagedApp:
                         managed_node["managedNodeType"]["imageUri"],
                     )
                 )
-                getLogger().info(f'Starting: {managed_node["name"]}')
                 self.__nodes[new["name"]] = await self.__run_node(managed_node)
             elif (new and new.get("removed")) or (old and not new):
                 # Node was removed, stop it
