@@ -14,6 +14,7 @@ from uuid import uuid4
 import aiorun
 import boto3
 import simplejson as json
+from dateutil.parser import parse as datetime_parser
 from docker.client import DockerClient
 from docker.models.containers import Container, ContainerCollection
 from docker.models.networks import Network
@@ -231,7 +232,9 @@ class ManagedAppChangeReceiver(Node):
         try:
             await self.__managed_app._handle_change(change)
         except Exception:
-            getLogger().exception(f"Error handling change:\n{json.dumps(change, indent=4)}")
+            getLogger().exception(
+                f"Error handling change:\n{json.dumps(change, indent=4)}"
+            )
 
 
 class ManagedAppDockerClient(DockerClient):
@@ -328,6 +331,7 @@ class ManagedApp:
             username=environ["USER_NAME"],
         )
         self.__cognito.authenticate(password=environ["PASSWORD"])
+        self.__datetime: datetime = None
         self.__docker_client = ManagedAppDockerClient.from_env()
         self.__ecr_client: ECRClient = boto3.client("ecr")
         self.__ecr_public_client: ECRPublicClient = boto3.client("ecr-public")
@@ -442,6 +446,11 @@ class ManagedApp:
         return node
 
     async def _handle_change(self, change: Change) -> None:
+        # Only process the change if it occurs after this App was started.
+        # Any changes to the App that occur before this are handled by the
+        # start procedure.
+        if datetime_parser(change["datetime"]) <= self.__datetime:
+            return
         new = change.get("new")
         old = change.get("old")
         if new and old and new["type"] == "Tenant":
@@ -480,7 +489,9 @@ class ManagedApp:
                 self.__nodes[new["name"]] = await self.__run_node(managed_node)
             elif (new and new.get("removed")) or (old and not new):
                 # Node was removed, stop it
-                getLogger().info(f'Received a ManagedNode removal: {(new or old)["name"]}')
+                getLogger().info(
+                    f'Received a ManagedNode removal: {(new or old)["name"]}'
+                )
                 if node := self.__nodes.pop((new or old)["name"], None):
                     await node.stop_async()
                     await node.remove_async()
@@ -533,7 +544,9 @@ class ManagedApp:
         elif (new or old)["type"] == "Edge" and (new is not None) ^ (old is not None):
             # find nodes that use edge and restart them
             edge = new or old
-            getLogger().info(f'Received a change to an Edge: {edge["source"]} -> {edge["target"]}')
+            getLogger().info(
+                f'Received a change to an Edge: {edge["source"]} -> {edge["target"]}'
+            )
             nodes: list[ManagedNodeContainer] = list()
             for node in self.__nodes.values():
                 if edge["source"] == node.name or edge["target"] == node.name:
@@ -605,6 +618,7 @@ class ManagedApp:
                         variable_values=dict(name=self.name, tenant=self.tenant),
                     )
                 )["GetApp"]
+            self.__datetime = datetime.utcnow()
             self.__region = managed_app["tenant"]["region"]
             managed_node_list: list[ManagedNode] = managed_app["nodes"]
             managed_nodes: dict[str, ManagedNode] = {
@@ -664,8 +678,8 @@ class ManagedApp:
             # Notify systemd that we're going...
             self.__sdnotify.notify("READY=1")
             # Start up our change receiver
-            self.__managed_app_change_receiver_node: ManagedAppChangeReceiver = await _run_in_executor(
-                ManagedAppChangeReceiver, managed_app=self
+            self.__managed_app_change_receiver_node: ManagedAppChangeReceiver = (
+                await _run_in_executor(ManagedAppChangeReceiver, managed_app=self)
             )
             await self.__managed_app_change_receiver_node.start()
             await self.__managed_app_change_receiver_node.join()
