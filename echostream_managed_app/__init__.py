@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import functools
 from base64 import b64decode
-from datetime import datetime
+from datetime import datetime, timezone
 from logging import INFO, WARNING, Formatter, getLogger
 from logging.handlers import WatchedFileHandler
 from os import environ, system
@@ -618,7 +618,7 @@ class ManagedApp:
                         variable_values=dict(name=self.name, tenant=self.tenant),
                     )
                 )["GetApp"]
-            self.__datetime = datetime.utcnow()
+            self.__datetime = datetime.now(timezone.utc)
             self.__region = managed_app["tenant"]["region"]
             managed_node_list: list[ManagedNode] = managed_app["nodes"]
             managed_nodes: dict[str, ManagedNode] = {
