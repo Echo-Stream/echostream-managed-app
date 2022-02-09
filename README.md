@@ -28,9 +28,9 @@ Below are the required env vars. These can be found in `user-data` file in your 
 
 #### other requirements
 - The necessary pip packages for this app are in `requirements.dev.txt`.
-- Docker engine must up and running
-
-This app looks for aws credentials in environment variables or at `~/.aws/credentials`. These aws credentials should have access to login/pull images from ecr and write access to cloudwatch logs.
+- Docker engine must be installed.
+- This app looks for aws credentials in environment variables or at `~/.aws/credentials`. 
+These aws credentials should have access to login/pull images from ecr and write access to cloudwatch logs.
 
 ```
 "ecr-public:DescribeImages",
@@ -48,7 +48,7 @@ This app looks for aws credentials in environment variables or at `~/.aws/creden
 "sts:GetServiceBearerToken",
 ```
 
-Once Docker engine is running and all the environment variables are sourced, the app can be started by python interpreter `python echostream_managed_app/__init__.py`. 
+After environment variables are sourced and Docker engine is running, the app can be started by python interpreter `python echostream_managed_app/__init__.py`. 
 The app starts to receive messages from app change receiver and starts managing the nodes on the docker.
 
 More details here: [Managed-app](https://docs.echo.stream/docs/managed-app)
