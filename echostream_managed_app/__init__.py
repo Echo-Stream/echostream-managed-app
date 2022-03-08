@@ -333,7 +333,6 @@ class ManagedApp:
         self.__cognito.authenticate(password=environ["PASSWORD"])
         self.__datetime: datetime = None
         self.__docker_client = ManagedAppDockerClient.from_env()
-        self.__ecr_client: ECRClient = boto3.client("ecr")
         self.__ecr_public_client: ECRPublicClient = boto3.client("ecr-public")
         self.__gql_client = GqlClient(
             fetch_schema_from_transport=True,
@@ -356,14 +355,14 @@ class ManagedApp:
                 registries.add(registry)
         registries = list(registries)
         public_auth_token = (
-            await _run_in_executor(self.ecr_public_client.get_authorization_token)
+            await _run_in_executor(boto3.client("ecr-public").get_authorization_token)
         )["authorizationData"]["authorizationToken"]
         private_auth_tokens = (
             [
                 auth_data["authorizationToken"]
                 for auth_data in (
                     await _run_in_executor(
-                        self.ecr_client.get_authorization_token,
+                        boto3.client("ecr").get_authorization_token,
                         registryIds=[registry.split(".")[0] for registry in registries],
                     )
                 )["authorizationData"]
@@ -565,14 +564,6 @@ class ManagedApp:
     @property
     def docker_network(self) -> Network:
         return self.__docker_network
-
-    @property
-    def ecr_client(self) -> ECRClient:
-        return self.__ecr_client
-
-    @property
-    def ecr_public_client(self) -> ECRPublicClient:
-        return self.__ecr_public_client
 
     @property
     def environment(self) -> dict[str, str]:
