@@ -4,7 +4,7 @@ boto3
 boto3-stubs[ecr,ecr-public]
 build
 docker>=4.4
-echostream-node>=0.1.1
+echostream-node>=0.1.2
 gql[aiohttp]>=3.0.0
 pycognito
 python-dateutil
