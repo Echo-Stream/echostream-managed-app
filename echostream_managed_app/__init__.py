@@ -333,7 +333,6 @@ class ManagedApp:
         self.__cognito.authenticate(password=environ["PASSWORD"])
         self.__datetime: datetime = None
         self.__docker_client = ManagedAppDockerClient.from_env()
-        self.__ecr_public_client: ECRPublicClient = boto3.client("ecr-public")
         self.__gql_client = GqlClient(
             fetch_schema_from_transport=True,
             transport=CognitoAIOHTTPTransport(
@@ -355,7 +354,7 @@ class ManagedApp:
                 registries.add(registry)
         registries = list(registries)
         public_auth_token = (
-            await _run_in_executor(boto3.client("ecr-public").get_authorization_token)
+            await _run_in_executor(boto3.client("ecr-public", region_name="us-east-1").get_authorization_token)
         )["authorizationData"]["authorizationToken"]
         private_auth_tokens = (
             [
