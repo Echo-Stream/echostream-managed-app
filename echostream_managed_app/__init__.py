@@ -361,7 +361,7 @@ class ManagedApp:
                 auth_data["authorizationToken"]
                 for auth_data in (
                     await _run_in_executor(
-                        boto3.client("ecr").get_authorization_token,
+                        boto3.client("ecr", region_name="us-east-1").get_authorization_token,
                         registryIds=[registry.split(".")[0] for registry in registries],
                     )
                 )["authorizationData"]
