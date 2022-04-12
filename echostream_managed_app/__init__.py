@@ -21,7 +21,7 @@ from docker.models.networks import Network
 from docker.types.containers import LogConfig
 from docker.types.services import Mount
 from echostream_node import Message
-from echostream_node.asyncio import CognitoAIOHTTPTransport, Node
+from echostream_node.asyncio import AppNode, CognitoAIOHTTPTransport
 from gql.client import Client as GqlClient
 from gql.gql import gql
 from pycognito import Cognito
@@ -218,7 +218,7 @@ class ManagedAppContainerCollection(ContainerCollection):
         return await _run_in_executor(self.prune)
 
 
-class ManagedAppChangeReceiver(Node):
+class ManagedAppChangeReceiver(AppNode):
     def __init__(self, *, managed_app: ManagedApp) -> None:
         super().__init__(name=f"{managed_app.name}:Change Receiver")
         self.__managed_app = managed_app
@@ -354,14 +354,20 @@ class ManagedApp:
                 registries.add(registry)
         registries = list(registries)
         public_auth_token = (
-            await _run_in_executor(boto3.client("ecr-public", region_name="us-east-1").get_authorization_token)
+            await _run_in_executor(
+                boto3.client(
+                    "ecr-public", region_name="us-east-1"
+                ).get_authorization_token
+            )
         )["authorizationData"]["authorizationToken"]
         private_auth_tokens = (
             [
                 auth_data["authorizationToken"]
                 for auth_data in (
                     await _run_in_executor(
-                        boto3.client("ecr", region_name="us-east-1").get_authorization_token,
+                        boto3.client(
+                            "ecr", region_name="us-east-1"
+                        ).get_authorization_token,
                         registryIds=[registry.split(".")[0] for registry in registries],
                     )
                 )["authorizationData"]
