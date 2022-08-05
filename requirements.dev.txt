@@ -1,4 +1,7 @@
 aiorun
+aws-error-utils
+awsserviceendpoints
+backoff
 black
 boto3
 boto3-stubs[ecr,ecr-public]

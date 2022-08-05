@@ -8,12 +8,16 @@ from logging import INFO, WARNING, Formatter, getLogger
 from logging.handlers import WatchedFileHandler
 from os import environ, system
 from time import gmtime
-from typing import TYPE_CHECKING, Any, Callable, Coroutine, Literal, TypedDict
+from typing import Any, Callable, Coroutine, Literal, TypedDict
 from uuid import uuid4
 
 import aiorun
+import awsserviceendpoints
+import backoff
 import boto3
 import simplejson as json
+from aws_error_utils import aws_error_matches
+from botocore.exceptions import ClientError
 from dateutil.parser import parse as datetime_parser
 from docker.client import DockerClient
 from docker.models.containers import Container, ContainerCollection
@@ -27,12 +31,6 @@ from gql.gql import gql
 from pycognito import Cognito
 from sdnotify import SystemdNotifier
 
-if TYPE_CHECKING:
-    from mypy_boto3_ecr.client import ECRClient
-    from mypy_boto3_ecr_public.client import ECRPublicClient
-else:
-    ECRClient = object
-    ECRPublicClient = object
 
 getLogger().setLevel(environ.get("LOGGING_LEVEL") or INFO)
 watched_file_handler = WatchedFileHandler(
@@ -353,29 +351,47 @@ class ManagedApp:
             if registry != "public.ecr.aws":
                 registries.add(registry)
         registries = list(registries)
-        public_auth_token = (
-            await _run_in_executor(
-                boto3.client(
-                    "ecr-public", region_name="us-east-1"
-                ).get_authorization_token
-            )
-        )["authorizationData"]["authorizationToken"]
-        private_auth_tokens = (
-            [
-                auth_data["authorizationToken"]
-                for auth_data in (
-                    await _run_in_executor(
-                        boto3.client(
-                            "ecr", region_name="us-east-1"
-                        ).get_authorization_token,
-                        registryIds=[registry.split(".")[0] for registry in registries],
-                    )
-                )["authorizationData"]
-            ]
-            if registries
-            else []
+
+        @backoff.on_exception(
+            backoff.expo,
+            ClientError,
+            giveup=lambda e: not aws_error_matches(e, "ExpiredTokenException"),
+            max_time=300,
         )
-        auth_tokens: list[str] = [public_auth_token, *private_auth_tokens]
+        def private_get_authorization_token(
+            registry_ids: list[str],
+        ) -> list[str]:
+            return [
+                auth_data["authorizationToken"]
+                for auth_data in boto3.Session()
+                .client("ecr", region_name="us-east-1")
+                .get_authorization_token(registryIds=registry_ids)["authorizationData"]
+            ]
+
+        @backoff.on_exception(
+            backoff.expo,
+            ClientError,
+            giveup=lambda e: not aws_error_matches(e, "ExpiredTokenException"),
+            max_time=300,
+        )
+        def public_get_authorization_token() -> str:
+            return (
+                boto3.Session()
+                .client("ecr-public", region_name="us-east-1")
+                .get_authorization_token()["authorizationData"]["authorizationToken"]
+            )
+
+        auth_tokens: list[str] = [
+            await _run_in_executor(public_get_authorization_token),
+            *(
+                await _run_in_executor(
+                    private_get_authorization_token,
+                    [registry.split(".")[0] for registry in registries],
+                )
+                if registries
+                else []
+            ),
+        ]
         registries.insert(0, "public.ecr.aws")
         logins: list[Coroutine] = list()
         for index, auth_token in enumerate(auth_tokens):
