@@ -457,7 +457,7 @@ class ManagedApp:
         if node:
             await node.stop_async()
             await node.remove_async()
-        node: ManagedNodeContainer = await self.docker_client.containers.create_async(
+        node = await self.docker_client.containers.create_async(
             managed_node["managedNodeType"]["imageUri"],
             managed_app=self,
             managed_node=managed_node,
@@ -519,9 +519,7 @@ class ManagedApp:
                 getLogger().info(f'Received a change to ManagedNode: {new["name"]}')
                 managed_node: ManagedNode = await self.__get_managed_node(new["name"])
                 # The node changed, restart it
-                if (node := self.__nodes.get(new["name"])) and not self.__validate_node(
-                    node, managed_node
-                ):
+                if node := self.__nodes.get(new["name"]):
                     self.__nodes[new["name"]] = await self.__run_node(
                         managed_node, node
                     )
