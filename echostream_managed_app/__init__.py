@@ -25,12 +25,13 @@ from docker.models.networks import Network
 from docker.types.containers import LogConfig
 from docker.types.services import Mount
 from echostream_node import Message
-from echostream_node.asyncio import AppNode, CognitoAIOHTTPTransport
+from echostream_node.asyncio import AppNode
 from gql.client import Client as GqlClient
 from gql.gql import gql
+from gql.transport.aiohttp import AIOHTTPTransport
+from gql_appsync_cognito_authentication import AppSyncCognitoAuthentication
 from pycognito import Cognito
 from sdnotify import SystemdNotifier
-
 
 getLogger().setLevel(environ.get("LOGGING_LEVEL") or INFO)
 watched_file_handler = WatchedFileHandler(
@@ -333,9 +334,9 @@ class ManagedApp:
         self.__docker_client = ManagedAppDockerClient.from_env()
         self.__gql_client = GqlClient(
             fetch_schema_from_transport=True,
-            transport=CognitoAIOHTTPTransport(
-                self.__cognito,
-                environ["APPSYNC_ENDPOINT"],
+            transport=AIOHTTPTransport(
+                auth=AppSyncCognitoAuthentication(self.__cognito),
+                url=environ["APPSYNC_ENDPOINT"],
             ),
         )
         self.__name: str = environ["APP"]
