@@ -4,6 +4,8 @@ EchoStream managed app is a part of your EchoStream tenant. It maintains [echost
 
 It is packaged as a part of your seed.iso (boot image), it can be downloaded from EchoStream application UI or through an api call. The boot image hardens the VM and configures all necessary things to let the managed app run.
 
+> Note: version >=0.3.0 requires Python 3.12
+
 ### What echostream-managed-app does?
 - It starts up app change receiver node and starts receiving messages from app change router.
 - Pull Docker images from private EchoStream ecr or public-ecr.
